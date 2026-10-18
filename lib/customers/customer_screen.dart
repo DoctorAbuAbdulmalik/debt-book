@@ -9,6 +9,7 @@ import '../entries/entry.dart';
 import '../entries/invoice_pdf.dart';
 import '../entries/writeoff_sheet.dart';
 import 'customer.dart';
+import 'edit_customer_sheet.dart';
 
 class CustomerScreen extends ConsumerWidget {
   final Customer customer;
@@ -20,16 +21,42 @@ class CustomerScreen extends ConsumerWidget {
     ref.invalidate(customerProvider(customer.id));
   }
 
-  Future<void> _addDebt(BuildContext context, WidgetRef ref) async {
+  Future<void> _addDebt(
+      BuildContext context, WidgetRef ref, Customer current) async {
     final added = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => AddDebtScreen(
-          customerId: customer.id,
-          customerName: customer.name,
+          customerId: current.id,
+          customerName: current.name,
         ),
       ),
     );
     if (added == true) _refresh(ref);
+  }
+
+  Future<void> _editCustomer(
+      BuildContext context, WidgetRef ref, Customer current) async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => EditCustomerSheet(customer: current),
+    );
+    if (saved == true) _refresh(ref);
+  }
+
+  Future<void> _editEntry(BuildContext context, WidgetRef ref,
+      Customer current, Entry entry) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => AddDebtScreen(
+          customerId: current.id,
+          customerName: current.name,
+          editing: entry,
+          currentBalance: current.balance,
+        ),
+      ),
+    );
+    if (saved == true) _refresh(ref);
   }
 
   Future<void> _writeoff(
@@ -47,7 +74,7 @@ class CustomerScreen extends ConsumerWidget {
     // Долг выплачен полностью: возвращаемся к списку (клиент там уже скрыт)
     if (updated.balance <= 0 && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تم تسديد دين ${customer.name} بالكامل')),
+        SnackBar(content: Text('تم تسديد دين ${updated.name} بالكامل')),
       );
       Navigator.of(context).pop();
     }
@@ -110,6 +137,11 @@ class CustomerScreen extends ConsumerWidget {
         title: Text(current.name),
         actions: [
           IconButton(
+            tooltip: 'تعديل بيانات العميل',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () => _editCustomer(context, ref, current),
+          ),
+          IconButton(
             tooltip: 'طباعة كشف الحساب',
             icon: const Icon(Icons.print_outlined),
             onPressed: (entries.value?.isNotEmpty ?? false)
@@ -119,7 +151,7 @@ class CustomerScreen extends ConsumerWidget {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _addDebt(context, ref),
+        onPressed: () => _addDebt(context, ref, current),
         icon: const Icon(Icons.add),
         label: const Text('دين جديد'),
       ),
@@ -200,6 +232,7 @@ class CustomerScreen extends ConsumerWidget {
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (_, i) => _EntryCard(
                     entry: list[i],
+                    onEdit: () => _editEntry(context, ref, current, list[i]),
                     onPrint: () =>
                         printInvoice(current, list[i], current.balance),
                     onDelete: () => _deleteEntry(context, ref, list[i]),
@@ -214,15 +247,17 @@ class CustomerScreen extends ConsumerWidget {
   }
 }
 
-/// Карточка одной операции. Стрелка раскрытия, печать и корзина стоят
+/// Карточка одной операции. Стрелка раскрытия и меню стоят
 /// в фиксированных местах, поэтому у всех записей всё выровнено одинаково.
 class _EntryCard extends StatefulWidget {
   final Entry entry;
+  final VoidCallback onEdit;
   final VoidCallback onPrint;
   final VoidCallback onDelete;
 
   const _EntryCard({
     required this.entry,
+    required this.onEdit,
     required this.onPrint,
     required this.onDelete,
   });
@@ -324,35 +359,53 @@ class _EntryCardState extends State<_EntryCard> {
 
                   // Фиксированное место под стрелку (пустое, если позиций нет)
                   SizedBox(
-                    width: 32,
+                    width: 28,
                     child: hasItems
                         ? Icon(_open ? Icons.expand_less : Icons.expand_more,
                             color: scheme.onSurfaceVariant)
                         : null,
                   ),
 
-                  // Печать
-                  SizedBox(
-                    width: 40,
-                    child: IconButton(
-                      tooltip: 'طباعة',
-                      padding: EdgeInsets.zero,
-                      icon: Icon(Icons.print_outlined,
-                          color: Colors.grey.shade600),
-                      onPressed: widget.onPrint,
-                    ),
-                  ),
-
-                  // Корзина
-                  SizedBox(
-                    width: 40,
-                    child: IconButton(
-                      tooltip: 'حذف',
-                      padding: EdgeInsets.zero,
-                      icon: Icon(Icons.delete_outline,
-                          color: Colors.grey.shade600),
-                      onPressed: widget.onDelete,
-                    ),
+                  // Меню: редактировать / печатать / удалить
+                  PopupMenuButton<String>(
+                    tooltip: '',
+                    icon: Icon(Icons.more_vert, color: Colors.grey.shade600),
+                    onSelected: (v) {
+                      switch (v) {
+                        case 'edit':
+                          widget.onEdit();
+                        case 'print':
+                          widget.onPrint();
+                        case 'delete':
+                          widget.onDelete();
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Row(children: [
+                          Icon(Icons.edit_outlined),
+                          SizedBox(width: 12),
+                          Text('تعديل'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'print',
+                        child: Row(children: [
+                          Icon(Icons.print_outlined),
+                          SizedBox(width: 12),
+                          Text('طباعة'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(children: [
+                          Icon(Icons.delete_outline),
+                          SizedBox(width: 12),
+                          Text('حذف'),
+                        ]),
+                      ),
+                    ],
                   ),
                 ],
               ),
